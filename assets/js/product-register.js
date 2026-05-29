@@ -1,25 +1,25 @@
+const API_BASE = window.API_BASE || '';
+
 function getCurrentUser() {
   return JSON.parse(sessionStorage.getItem('b7store_current_user') || 'null');
 }
 
-function getProducts() {
-  return JSON.parse(localStorage.getItem('b7store_products') || '[]');
+function showProductMessage(text) {
+  const message = document.getElementById('product-message');
+  if (!message) return;
+  message.textContent = text;
+  setTimeout(() => {
+    message.textContent = '';
+  }, 3500);
 }
 
-function saveProducts(products) {
-  localStorage.setItem('b7store_products', JSON.stringify(products));
-}
-
-function renderProducts() {
+function renderProductsList(products) {
   const productList = document.getElementById('product-list');
-  const products = getProducts();
   productList.innerHTML = '';
-
-  if (products.length === 0) {
+  if (!products || products.length === 0) {
     productList.innerHTML = '<div class="rounded-xl border border-dashed border-gray-300 bg-gray-50 p-6 text-sm text-gray-600">Nenhum produto cadastrado ainda.</div>';
     return;
   }
-
   products.reverse().forEach((product) => {
     const card = document.createElement('div');
     card.className = 'rounded-xl border border-gray-200 p-4';
@@ -47,32 +47,49 @@ function renderProducts() {
   });
 }
 
-function showProductMessage(text) {
-  const message = document.getElementById('product-message');
-  message.textContent = text;
-  setTimeout(() => {
-    message.textContent = '';
-  }, 3500);
+async function backendRequest(path, options = {}) {
+  if (!API_BASE) throw new Error('API_BASE não configurado');
+  const url = API_BASE.replace(/\/$/, '') + path;
+  const headers = options.headers || {};
+  const token = sessionStorage.getItem('b7store_token');
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+  const res = await fetch(url, { ...options, headers });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw err;
+  }
+  return res.json().catch(() => ({}));
 }
 
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
   const user = getCurrentUser();
   const userInfo = document.getElementById('user-info');
   const form = document.getElementById('product-form');
 
   if (!user) {
-    if (userInfo) {
-      userInfo.textContent = 'Usuário não autenticado';
-    }
+    if (userInfo) userInfo.textContent = 'Usuário não autenticado';
     form.querySelectorAll('input, textarea, button').forEach((field) => (field.disabled = true));
     showProductMessage('Faça login em login.html para acessar o cadastro de produtos.');
     return;
   }
 
-  userInfo.textContent = `Logado como ${user.name}`;
-  renderProducts();
+  userInfo.textContent = `Logado como ${user.name || user.email}`;
 
-  form.addEventListener('submit', (event) => {
+  // Fetch products from backend when available
+  if (API_BASE) {
+    try {
+      const data = await backendRequest('/products', { method: 'GET' });
+      renderProductsList(data || []);
+    } catch (err) {
+      renderProductsList([]);
+    }
+  } else {
+    // fallback to localStorage
+    const products = JSON.parse(localStorage.getItem('b7store_products') || '[]');
+    renderProductsList(products);
+  }
+
+  form.addEventListener('submit', async (event) => {
     event.preventDefault();
     const product = {
       name: document.getElementById('product-name').value.trim(),
@@ -89,10 +106,30 @@ document.addEventListener('DOMContentLoaded', () => {
       return;
     }
 
-    const products = getProducts();
+    if (API_BASE) {
+      try {
+        await backendRequest('/products', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(product),
+        });
+        // reload list
+        const data = await backendRequest('/products', { method: 'GET' });
+        renderProductsList(data || []);
+        form.reset();
+        showProductMessage('Produto cadastrado com sucesso!');
+      } catch (err) {
+        const msg = (err && err.message) || 'Erro ao cadastrar produto.';
+        showProductMessage(msg);
+      }
+      return;
+    }
+
+    // fallback local storage behavior
+    const products = JSON.parse(localStorage.getItem('b7store_products') || '[]');
     products.push(product);
-    saveProducts(products);
-    renderProducts();
+    localStorage.setItem('b7store_products', JSON.stringify(products));
+    renderProductsList(products);
     form.reset();
     showProductMessage('Produto cadastrado com sucesso!');
   });

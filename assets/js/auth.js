@@ -1,28 +1,15 @@
-const defaultUser = {
-  name: 'Administrador',
-  email: 'admin@b7store.com',
-  password: 'senha123'
-};
+// Frontend authentication: calls backend endpoints when available. Falls back to localStorage if backend fails.
 
-function getUsers() {
-  const users = JSON.parse(localStorage.getItem('b7store_users') || '[]');
-  if (users.length === 0) {
-    localStorage.setItem('b7store_users', JSON.stringify([defaultUser]));
-    return [defaultUser];
-  }
-  return users;
-}
+const API_BASE = window.API_BASE || '';
 
-function saveUsers(users) {
-  localStorage.setItem('b7store_users', JSON.stringify(users));
-}
-
-function setCurrentUser(user) {
+function setCurrentUser(user, token) {
   sessionStorage.setItem('b7store_current_user', JSON.stringify(user));
+  if (token) sessionStorage.setItem('b7store_token', token);
 }
 
 function showMessage(text, type = 'error') {
   const message = document.getElementById('message');
+  if (!message) return;
   message.textContent = text;
   message.className = type === 'success' ? 'text-sm text-center text-green-600' : 'text-sm text-center text-red-600';
 }
@@ -57,36 +44,66 @@ function attachToggleHandlers() {
   }
 }
 
+async function backendRequest(path, options = {}) {
+  if (!API_BASE) throw new Error('API_BASE não configurado');
+  const url = API_BASE.replace(/\/$/, '') + path;
+  const headers = options.headers || {};
+  const token = sessionStorage.getItem('b7store_token');
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+  try {
+    const res = await fetch(url, { ...options, headers });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) throw data;
+    return data;
+  } catch (err) {
+    throw err;
+  }
+}
+
 document.addEventListener('DOMContentLoaded', () => {
-  getUsers();
   attachToggleHandlers();
 
-  document.getElementById('login-form').addEventListener('submit', (event) => {
+  document.getElementById('login-form').addEventListener('submit', async (event) => {
     event.preventDefault();
     const email = document.getElementById('email-address').value.trim().toLowerCase();
     const password = document.getElementById('password').value;
-    const users = getUsers();
-    const user = users.find((item) => item.email.toLowerCase() === email && item.password === password);
 
+    if (API_BASE) {
+      try {
+        const data = await backendRequest('/auth/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email, password }),
+        });
+        setCurrentUser(data.user || { email }, data.token || null);
+        showMessage('Login realizado com sucesso! Redirecionando...', 'success');
+        setTimeout(() => (window.location.href = 'cadastro-produto.html'), 800);
+        return;
+      } catch (err) {
+        const msg = (err && err.message) || 'E-mail ou senha inválidos.';
+        showMessage(msg);
+        return;
+      }
+    }
+
+    // Fallback local behaviour (legacy)
+    const users = JSON.parse(localStorage.getItem('b7store_users') || '[]');
+    const user = users.find((item) => item.email.toLowerCase() === email && item.password === password);
     if (!user) {
       showMessage('E-mail ou senha inválidos. Use admin@b7store.com / senha123 ou cadastre-se.');
       return;
     }
-
     setCurrentUser(user);
     showMessage('Login realizado com sucesso! Redirecionando...', 'success');
-    setTimeout(() => {
-      window.location.href = 'cadastro-produto.html';
-    }, 800);
+    setTimeout(() => (window.location.href = 'cadastro-produto.html'), 800);
   });
 
-  document.getElementById('register-form').addEventListener('submit', (event) => {
+  document.getElementById('register-form').addEventListener('submit', async (event) => {
     event.preventDefault();
     const name = document.getElementById('register-name').value.trim();
     const email = document.getElementById('register-email').value.trim().toLowerCase();
     const password = document.getElementById('register-password').value;
     const confirmPassword = document.getElementById('register-password-confirm').value;
-    const users = getUsers();
 
     if (!name || !email || !password) {
       showMessage('Preencha nome, e-mail e senha para se cadastrar.');
@@ -98,14 +115,32 @@ document.addEventListener('DOMContentLoaded', () => {
       return;
     }
 
+    if (API_BASE) {
+      try {
+        const data = await backendRequest('/auth/register', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name, email, password }),
+        });
+        showMessage('Conta criada com sucesso! Faça login agora.', 'success');
+        toggleForm(false);
+        return;
+      } catch (err) {
+        const msg = (err && err.message) || 'Erro ao cadastrar.';
+        showMessage(msg);
+        return;
+      }
+    }
+
+    // Fallback local registration
+    const users = JSON.parse(localStorage.getItem('b7store_users') || '[]');
     if (users.some((item) => item.email === email)) {
       showMessage('E-mail já cadastrado. Faça login ou use outro e-mail.');
       return;
     }
-
     const newUser = { name, email, password };
     users.push(newUser);
-    saveUsers(users);
+    localStorage.setItem('b7store_users', JSON.stringify(users));
     showMessage('Conta criada com sucesso! Faça login agora.', 'success');
     toggleForm(false);
   });
