@@ -1,4 +1,10 @@
-// Configure aqui a URL do seu backend (remova o final / se houver)
-window.API_BASE = "https://back-refatoracao-qq3m06tzl-analoliveira113-3040s-projects.vercel.app"; // substitua pela URL do repositório back-refatoracao
+// Configure aqui a URL do seu backend.
+// Se você estiver usando o Live Server, este frontend rodará em http://127.0.0.1:5501 ou http://localhost:5501.
+// Nesse caso, use o backend local em http://localhost:3000.
+// Quando estiver em produção no Vercel, use a URL do backend no Vercel com /api no final.
 
-// Exemplo local para testes: http://localhost:3000
+const isLocalHost = ['localhost', '127.0.0.1'].includes(window.location.hostname);
+const LOCAL_API = 'http://localhost:3000';
+const VERCEL_API = 'https://back-refatoracao-qq3m06tzl-analoliveira113-3040s-projects.vercel.app/api';
+window.API_BASE = isLocalHost ? LOCAL_API : VERCEL_API;
+window.API_FALLBACK = isLocalHost ? VERCEL_API : '';

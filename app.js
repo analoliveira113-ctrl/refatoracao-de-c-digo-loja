@@ -7,7 +7,19 @@ const logger = require('./middlewares/logger');
 const errorHandler = require('./middlewares/errorHandler');
 
 const app = express();
-app.use(cors());
+const corsOptions = {
+  origin: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+};
+app.use((req, res, next) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type,Authorization');
+  next();
+});
+app.use(cors(corsOptions));
+app.options('*', cors(corsOptions));
 app.use(express.json());
 app.use(logger);
 
@@ -16,7 +28,7 @@ app.get('/', (req, res) => {
 });
 
 app.use('/categorias', categoriasRouter);
-app.use('/produtos', produtosRouter);
+app.use(['/produtos', '/products'], produtosRouter);
 app.use('/pedidos', pedidosRouter);
 
 app.use((req, res) => {

@@ -46,18 +46,31 @@ function attachToggleHandlers() {
 
 async function backendRequest(path, options = {}) {
   if (!API_BASE) throw new Error('API_BASE não configurado');
-  const url = API_BASE.replace(/\/$/, '') + path;
   const headers = options.headers || {};
   const token = sessionStorage.getItem('b7store_token');
   if (token) headers['Authorization'] = `Bearer ${token}`;
-  try {
-    const res = await fetch(url, { ...options, headers });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw data;
-    return data;
-  } catch (err) {
-    throw err;
+
+  const baseUrls = [API_BASE];
+  if (window.API_FALLBACK) baseUrls.push(window.API_FALLBACK);
+
+  let lastError;
+  for (const base of baseUrls) {
+    const url = base.replace(/\/$/, '') + path;
+    try {
+      const res = await fetch(url, { ...options, headers, mode: 'cors' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        lastError = data || new Error(`Erro ${res.status}`);
+        continue;
+      }
+      return data;
+    } catch (err) {
+      lastError = err;
+      console.warn(`[auth] backendRequest failed for ${url}:`, err);
+      if (!window.API_FALLBACK) throw err;
+    }
   }
+  throw lastError;
 }
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -67,6 +80,19 @@ document.addEventListener('DOMContentLoaded', () => {
     event.preventDefault();
     const email = document.getElementById('email-address').value.trim().toLowerCase();
     const password = document.getElementById('password').value;
+
+    const localLogin = () => {
+      const users = JSON.parse(localStorage.getItem('b7store_users') || '[]');
+      const user = users.find((item) => item.email.toLowerCase() === email && item.password === password);
+      if (!user) {
+        showMessage('E-mail ou senha inválidos. Use admin@b7store.com / senha123 ou cadastre-se.');
+        return false;
+      }
+      setCurrentUser(user);
+      showMessage('Login realizado com sucesso! Redirecionando...', 'success');
+      setTimeout(() => (window.location.href = 'cadastro-produto.html'), 800);
+      return true;
+    };
 
     if (API_BASE) {
       try {
@@ -80,6 +106,8 @@ document.addEventListener('DOMContentLoaded', () => {
         setTimeout(() => (window.location.href = 'cadastro-produto.html'), 800);
         return;
       } catch (err) {
+        console.warn('[auth] backend login falhou, usando fallback local:', err);
+        if (localLogin()) return;
         const msg = (err && err.message) || 'E-mail ou senha inválidos.';
         showMessage(msg);
         return;
@@ -87,15 +115,7 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // Fallback local behaviour (legacy)
-    const users = JSON.parse(localStorage.getItem('b7store_users') || '[]');
-    const user = users.find((item) => item.email.toLowerCase() === email && item.password === password);
-    if (!user) {
-      showMessage('E-mail ou senha inválidos. Use admin@b7store.com / senha123 ou cadastre-se.');
-      return;
-    }
-    setCurrentUser(user);
-    showMessage('Login realizado com sucesso! Redirecionando...', 'success');
-    setTimeout(() => (window.location.href = 'cadastro-produto.html'), 800);
+    localLogin();
   });
 
   document.getElementById('register-form').addEventListener('submit', async (event) => {
@@ -115,6 +135,20 @@ document.addEventListener('DOMContentLoaded', () => {
       return;
     }
 
+    const localRegister = () => {
+      const users = JSON.parse(localStorage.getItem('b7store_users') || '[]');
+      if (users.some((item) => item.email === email)) {
+        showMessage('E-mail já cadastrado. Faça login ou use outro e-mail.');
+        return false;
+      }
+      const newUser = { name, email, password };
+      users.push(newUser);
+      localStorage.setItem('b7store_users', JSON.stringify(users));
+      showMessage('Conta criada com sucesso! Faça login agora.', 'success');
+      toggleForm(false);
+      return true;
+    };
+
     if (API_BASE) {
       try {
         const data = await backendRequest('/auth/register', {
@@ -126,6 +160,8 @@ document.addEventListener('DOMContentLoaded', () => {
         toggleForm(false);
         return;
       } catch (err) {
+        console.warn('[auth] backend register falhou, usando fallback local:', err);
+        if (localRegister()) return;
         const msg = (err && err.message) || 'Erro ao cadastrar.';
         showMessage(msg);
         return;
@@ -133,15 +169,6 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     // Fallback local registration
-    const users = JSON.parse(localStorage.getItem('b7store_users') || '[]');
-    if (users.some((item) => item.email === email)) {
-      showMessage('E-mail já cadastrado. Faça login ou use outro e-mail.');
-      return;
-    }
-    const newUser = { name, email, password };
-    users.push(newUser);
-    localStorage.setItem('b7store_users', JSON.stringify(users));
-    showMessage('Conta criada com sucesso! Faça login agora.', 'success');
-    toggleForm(false);
+    localRegister();
   });
 });

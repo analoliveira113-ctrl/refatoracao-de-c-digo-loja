@@ -13,6 +13,17 @@ function showProductMessage(text) {
   }, 3500);
 }
 
+function loadLocalProducts() {
+  return JSON.parse(localStorage.getItem('b7store_products') || '[]');
+}
+
+function saveLocalProduct(product) {
+  const products = loadLocalProducts();
+  products.push(product);
+  localStorage.setItem('b7store_products', JSON.stringify(products));
+  return products;
+}
+
 function renderProductsList(products) {
   const productList = document.getElementById('product-list');
   productList.innerHTML = '';
@@ -26,20 +37,19 @@ function renderProductsList(products) {
     card.innerHTML = `
       <div class="flex items-start gap-4">
         <div class="h-20 w-20 overflow-hidden rounded-xl bg-gray-100">
-          <img src="${product.image || 'assets/images/products/camiseta-css.png'}" alt="${product.name}" class="h-full w-full object-cover" />
+          <img src="${product.imagem || product.image || 'assets/images/products/camiseta-css.png'}" alt="${product.nome || product.name}" class="h-full w-full object-cover" />
         </div>
         <div class="min-w-0 flex-1">
           <div class="flex items-center justify-between gap-3">
             <div>
-              <div class="text-base font-semibold text-gray-900">${product.name}</div>
-              <div class="text-sm text-gray-500">Categoria: ${product.category}</div>
+              <div class="text-base font-semibold text-gray-900">${product.nome || product.name}</div>
+              <div class="text-sm text-gray-500">Categoria: ${product.categoria || product.categoria_id || product.category}</div>
             </div>
             <div class="text-right">
-              <div class="text-sm text-gray-500">Estoque: ${product.stock}</div>
-              <div class="text-base font-semibold text-gray-900">R$ ${parseFloat(product.price).toFixed(2)}</div>
+              <div class="text-base font-semibold text-gray-900">R$ ${parseFloat(product.preco || product.price).toFixed(2)}</div>
             </div>
           </div>
-          <p class="mt-3 text-sm text-gray-600">${product.description || 'Sem descrição informada.'}</p>
+          <p class="mt-3 text-sm text-gray-600">${product.descricao || product.description || 'Sem descrição informada.'}</p>
         </div>
       </div>
     `;
@@ -49,16 +59,33 @@ function renderProductsList(products) {
 
 async function backendRequest(path, options = {}) {
   if (!API_BASE) throw new Error('API_BASE não configurado');
-  const url = API_BASE.replace(/\/$/, '') + path;
   const headers = options.headers || {};
   const token = sessionStorage.getItem('b7store_token');
   if (token) headers['Authorization'] = `Bearer ${token}`;
-  const res = await fetch(url, { ...options, headers });
-  if (!res.ok) {
-    const err = await res.json().catch(() => ({}));
-    throw err;
+
+  const baseUrls = [API_BASE];
+  if (window.API_FALLBACK) baseUrls.push(window.API_FALLBACK);
+
+  let lastError;
+  for (const base of baseUrls) {
+    const url = base.replace(/\/$/, '') + path;
+    console.log('[backendRequest] trying url=', url, 'options=', options);
+    try {
+      const res = await fetch(url, { ...options, headers, mode: 'cors' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        lastError = data || new Error(`Erro ${res.status}`);
+        console.error('[backendRequest] status=', res.status, 'body=', data);
+        continue;
+      }
+      return data;
+    } catch (err) {
+      lastError = err;
+      console.warn('[backendRequest] failed for', url, err);
+      if (!window.API_FALLBACK) throw err;
+    }
   }
-  return res.json().catch(() => ({}));
+  throw lastError;
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
@@ -78,57 +105,70 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Fetch products from backend when available
   if (API_BASE) {
     try {
-      const data = await backendRequest('/products', { method: 'GET' });
+      const data = await backendRequest('/produtos', { method: 'GET' });
       renderProductsList(data || []);
     } catch (err) {
-      renderProductsList([]);
+      console.warn('[product-register] backend unavailable, usando fallback local', err);
+      renderProductsList(loadLocalProducts());
     }
   } else {
-    // fallback to localStorage
-    const products = JSON.parse(localStorage.getItem('b7store_products') || '[]');
-    renderProductsList(products);
+    renderProductsList(loadLocalProducts());
   }
 
   form.addEventListener('submit', async (event) => {
     event.preventDefault();
+    
+    const nome = document.getElementById('product-name').value.trim();
+    const preco = document.getElementById('product-price').value;
+    const categoriaValue = document.getElementById('product-category').value.trim();
+    const imagem = document.getElementById('product-image').value.trim();
+    const descricao = document.getElementById('product-description').value.trim();
+
+    if (!nome || !preco || !categoriaValue) {
+      showProductMessage('Preencha nome, preço e categoria.');
+      return;
+    }
+
     const product = {
-      name: document.getElementById('product-name').value.trim(),
-      price: document.getElementById('product-price').value,
-      category: document.getElementById('product-category').value.trim(),
-      stock: document.getElementById('product-stock').value,
-      image: document.getElementById('product-image').value.trim(),
-      description: document.getElementById('product-description').value.trim(),
+      nome,
+      preco: parseFloat(preco),
+      descricao,
+      categoria: categoriaValue,
+      imagem,
       createdAt: new Date().toISOString(),
     };
-
-    if (!product.name || !product.price || !product.category || !product.stock) {
-      showProductMessage('Preencha nome, preço, categoria e estoque.');
-      return;
+    const categoriaId = Number(categoriaValue);
+    if (!Number.isNaN(categoriaId)) {
+      product.categoria_id = categoriaId;
     }
 
     if (API_BASE) {
       try {
-        await backendRequest('/products', {
+        console.log('[product-register] sending', product);
+        await backendRequest('/produtos', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(product),
         });
         // reload list
-        const data = await backendRequest('/products', { method: 'GET' });
+        const data = await backendRequest('/produtos', { method: 'GET' });
         renderProductsList(data || []);
         form.reset();
         showProductMessage('Produto cadastrado com sucesso!');
+        return;
       } catch (err) {
-        const msg = (err && err.message) || 'Erro ao cadastrar produto.';
-        showProductMessage(msg);
+        console.warn('[product-register] backend POST failed, fallback local', err);
+        const products = saveLocalProduct(product);
+        renderProductsList(products);
+        form.reset();
+        const message = (err && err.error) || (err && err.message) || 'Backend indisponível. Produto salvo localmente.';
+        showProductMessage(message);
+        return;
       }
-      return;
     }
 
     // fallback local storage behavior
-    const products = JSON.parse(localStorage.getItem('b7store_products') || '[]');
-    products.push(product);
-    localStorage.setItem('b7store_products', JSON.stringify(products));
+    const products = saveLocalProduct(product);
     renderProductsList(products);
     form.reset();
     showProductMessage('Produto cadastrado com sucesso!');
